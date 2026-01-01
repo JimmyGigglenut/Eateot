@@ -1,0 +1,138 @@
+# 1. SETUP: Standard install
+!apt-get install -y ffmpeg > /dev/null 2>&1
+!pip install pydub > /dev/null 2>&1
+
+import random, os
+from pydub import AudioSegment
+from pydub.effects import compress_dynamic_range, normalize
+from google.colab import files
+from IPython.display import Audio, display
+
+# --- AUDIO ENGINE FUNCTIONS ---
+
+def change_pitch_keep_speed(segment, semitones):
+    new_sample_rate = int(segment.frame_rate * (2.0 ** (semitones / 12.0)))
+    shifted = segment._spawn(segment.raw_data, overrides={'frame_rate': new_sample_rate})
+    return shifted.set_frame_rate(segment.frame_rate)
+
+def apply_infinite_reverb(segment):
+    """ The E1 Special: Massive 15-layer recursive echo & distant wash """
+    echo_chain = segment - 3 
+    for i in range(1, 16): 
+        decay = segment - (i * 3.5)
+        pos = i * 420 
+        echo_chain = echo_chain.overlay(decay.low_pass_filter(2800 - (i * 150)), position=pos)
+    ghost = segment.low_pass_filter(800) - 15
+    shimmer = change_pitch_keep_speed(segment, -0.7) - 18
+    combined = echo_chain.overlay(ghost).overlay(shimmer, position=600)
+    return combined.low_pass_filter(1600)
+
+def apply_hiccup(seg):
+    """ Vinyl Skip: Randomly selects 500ms and repeats it 3x """
+    if len(seg) < 2000: return seg
+    skip_start = random.randint(500, len(seg)-1500)
+    stuck_loop = seg[skip_start : skip_start+500] * 3 
+    return seg[:skip_start] + stuck_loop + seg[skip_start+500:]
+
+# --- MAIN EXECUTION ---
+
+print("--- LO-FI PITCH-WARP 2025: ORGANIZED EDITION ---")
+
+# 2. SELECT STAGE
+choice = input("Enter 1, 2, 3, or 3.5: ")
+static_file = f"Stage{choice if choice in ['1', '2'] else '2'}.mp3"
+if choice == "3.5": static_file = "Stage3.5.mp3"
+
+# 3. FILE HANDLING
+if not os.path.exists(static_file):
+    print(f"❌ Please upload {static_file} and your song.")
+    uploaded = files.upload()
+else:
+    print(f"✅ {static_file} found! Select your song.")
+    uploaded = files.upload()
+
+song_name = next((f for f in uploaded.keys() if f.endswith('.mp3') and not f.startswith('Stage')), None)
+
+if not song_name:
+    print("\nERROR: Song file missing.")
+else:
+    # Optimized Loading (Mono + 32k for speed)
+    song = AudioSegment.from_file(song_name).set_channels(1).set_frame_rate(32000)
+    static = AudioSegment.from_file(static_file).set_channels(1).set_frame_rate(32000)
+
+    # 4. STAGE PROCESSING
+    if choice == "3.5":
+        target_len = random.randint(120000, 180000)
+        print(f"🕯️ Creating Mournful Camaraderie + Hiccup: {target_len/1000:.2f}s")
+        
+        # Seamless Background Loop
+        final_audio = static
+        while len(final_audio) < target_len + 3000:
+            final_audio = final_audio.append(static, crossfade=3000)
+        final_audio = (final_audio + 6)[:target_len]
+
+        # Ghostly Snippet Overlay Loop
+        current_time = 2000
+        while current_time < target_len - 15000:
+            chunk_len = random.randint(9000, 14000) 
+            start_point = random.randint(0, max(1, len(song) - chunk_len))
+            snippet = song[start_point : start_point + chunk_len]
+            
+            # FX Chain: Pitch -> Reverb -> Filter -> Skip
+            snippet = change_pitch_keep_speed(snippet, random.uniform(-2.5, -0.5))
+            snippet = apply_infinite_reverb(snippet).low_pass_filter(1150)
+            
+            if random.random() < 0.30: # 30% chance to skip
+                snippet = apply_hiccup(snippet)
+            
+            # Stereo Shimmer Fades
+            snippet = snippet.fade_in(4000).fade_out(4000) - 19
+            left, right = snippet.pan(-1), snippet.pan(1)
+            
+            final_audio = final_audio.overlay(left, position=current_time)
+            final_audio = final_audio.overlay(right, position=current_time + 150)
+            
+            current_time += (chunk_len - 3500)
+
+    elif choice == "3":
+        print("🌀 Stage 3: Deep Reverb Maze...")
+        halfway = len(song) // 2
+        looped_half = song[halfway:]
+        song = looped_half.append(looped_half, crossfade=min(3000, len(looped_half)//2))
+        
+        # Pitch Drift Processing
+        drifted = AudioSegment.empty()
+        for i in range(0, len(song), 8000):
+            chunk = song[i:i+8000]
+            if len(chunk) < 500: break
+            chunk = change_pitch_keep_speed(chunk, random.uniform(-1.5, 0.5))
+            drifted = drifted.append(chunk, crossfade=min(1500, len(chunk)//2))
+        
+        song = apply_infinite_reverb(drifted)
+        target_len = len(song)
+        # Match static length
+        looped_static = static
+        while len(looped_static) < target_len:
+            looped_static = looped_static.append(static, crossfade=2000)
+        final_audio = looped_static[:target_len].overlay(song - 2)
+
+    else:
+        # Stages 1 & 2
+        print(f"📻 Stage {choice} Processing...")
+        target_len = random.randint(120000, 180000)
+        speed = 0.75 if choice == "1" else 0.6
+        processed = song._spawn(song.raw_data, overrides={'frame_rate': int(song.frame_rate * speed)}).set_frame_rate(32000)
+        final_audio = (static + 2)[:target_len].overlay((processed - 12)[:target_len])
+
+    # 5. FINAL EXPORT & PREVIEW
+    print("Exporting final master...")
+    final_audio = normalize(final_audio)
+    final_audio = compress_dynamic_range(final_audio, threshold=-14.0, ratio=4.0)
+    
+    output_name = f"LOFI_WARP_STAGE_{choice}.mp3"
+    final_audio.export(output_name, format="mp3", bitrate="128k")
+
+    print(f"\n--- SUCCESS! FINAL LENGTH: {len(final_audio)/1000:.2f}s ---")
+    display(Audio(output_name))
+    files.download(output_name)
+
